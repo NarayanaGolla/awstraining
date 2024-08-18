@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create a Lambda function that retrieves an SSM parameter and stores it in an S3 bucket.
+
+Parameters:
+  S3BucketName:
+    Description: Name of the S3 bucket created in step 2
+    Type: String
+    Default: my-unique-exercise-bucket-12345
+
+Resources:
+  ExerciseLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: Allow
+            Principal: 
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies: 
+        - PolicyName: 'exerciseLambdaPolicy'
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - 'ssm:GetParameter'
+                  - 's3:PutObject'
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+
+  ExerciseLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt ExerciseLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+
+          ssm_client = boto3.client('ssm')
+          s3_client = boto3.client('s3')
+          
+          def lambda_handler(event, context):
+              response = ssm_client.get_parameter(
+                  Name='UserName'
+              )
+              user_name = response['Parameter']['Value']
+              
+              file_content = json.dumps({'UserName': user_name})
+              s3_bucket = os.environ['S3BucketName']
+              s3_key = 'user_name.json'
+              
+              s3_client.put_object(
+                  Bucket=s3_bucket,
+                  Key=s3_key,
+                  Body=file_content
+              )
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Parameter stored in S3 successfully!')
+              }
+
+      Runtime: python3.8
+      Environment:
+        Variables:
+          S3BucketName: !Ref S3BucketName
+      Timeout: 60
+
+  LambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !GetAtt ExerciseLambdaFunction.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: 'cloudformation.amazonaws.com'
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt ExerciseLambdaFunction.Arn
